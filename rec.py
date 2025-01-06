@@ -15,7 +15,7 @@ from starlette.responses import StreamingResponse
 app = FastAPI()
 
 # Configuration
-STREAMS_DIR = "streams"
+STREAMS_DIR = "E:\Streams"
 RETENTION_DAYS = 365
 RECORD_DURATION = 3600  # 3 minutes in seconds
 CONFIG_FILE = "streams.json"
