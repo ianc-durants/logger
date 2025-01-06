@@ -17,7 +17,7 @@ app = FastAPI()
 # Configuration
 STREAMS_DIR = "E:\Streams"
 RETENTION_DAYS = 365
-RECORD_DURATION = 3600  # 3 minutes in seconds
+RECORD_DURATION = 3600  # 1 hour in seconds
 CONFIG_FILE = "streams.json"
 
 # Manage active streams
@@ -45,32 +45,26 @@ def ensure_dir(path):
 def load_streams_from_config():
     """Load streams from the configuration file."""
     if not os.path.exists(CONFIG_FILE):
-        print(f"{CONFIG_FILE} not found. Creating a new one with default content.")
-        # Create the file with default content
-        default_content = {}
-        with open(CONFIG_FILE, "w") as file:
-            json.dump(default_content, file, indent=4)
-        return default_content
+        return {}
 
-    # Load the file content if it exists
     with open(CONFIG_FILE, "r") as file:
         try:
-            content = json.load(file)
-            if not isinstance(content, dict):
-                raise ValueError("Config file content is not a dictionary")
-            return content
-        except (json.JSONDecodeError, ValueError) as e:
-            print(f"Error decoding JSON in {CONFIG_FILE}: {e}. Recreating with default content.")
-            default_content = {}
-            with open(CONFIG_FILE, "w") as file:
-                json.dump(default_content, file, indent=4)
-            return default_content
+            return json.load(file)
+        except json.JSONDecodeError:
+            return {}
 
 
 def save_streams_to_config():
     """Save active streams to the configuration file."""
     with open(CONFIG_FILE, "w") as file:
-        json.dump({k: v for k, v in active_streams.items() if "thread" not in v}, file, indent=4)
+        json.dump(
+            {
+                stream_name: {k: v for k, v in data.items() if k != "thread"}
+                for stream_name, data in active_streams.items()
+            },
+            file,
+            indent=4
+        )
 
 
 def cleanup_old_files():
@@ -87,54 +81,6 @@ def cleanup_old_files():
                 if file_time < cutoff:
                     os.remove(file_path)
 
-def record2_stream(address, port, stream_name):
-    """Record a multicast stream in TS format."""
-    stream_folder = os.path.join(STREAMS_DIR, stream_name)
-    ensure_dir(stream_folder)
-
-    log_file_path = os.path.join(stream_folder, "recording.log")
-                        
-    with open(log_file_path, "a") as log_file:
-        while stream_name in active_streams:
-            # Get the current time
-            current_time = datetime.now()
-                                
-            # Calculate the time until the next top of the hour
-            next_top_of_hour = current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            time_until_next_hour = (next_top_of_hour - current_time).total_seconds()
-
-            # If the current time is before the top of the hour, record the first file with timestamp
-            if time_until_next_hour > 0:
-                # Record until the top of the hour with the first file named with timestamp
-                timestamp = current_time.strftime("%Y-%m-%d_%H-%M-%S")
-                ts_file = os.path.join(stream_folder, f"{timestamp}.ts")
-                ffmpeg_command = [
-                    "ffmpeg", "-i", f"udp://@{address}:{port}",
-                    "-c", "copy", "-f", "mpegts", "-t", str(time_until_next_hour), ts_file
-                ]
-                
-                try:
-                    subprocess.run(ffmpeg_command, stdout=log_file, stderr=log_file, check=True)
-                except subprocess.CalledProcessError as e:
-                    log_file.write(f"Error recording stream {stream_name}: {e}\n")
-                    break                   
-            # After the top of the hour, record subsequent files starting from the new hour
-            while stream_name in active_streams:
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                ts_file = os.path.join(stream_folder, f"{timestamp}.ts")
-
-                ffmpeg_command = [
-                    "ffmpeg", "-i", f"udp://@{address}:{port}",
-                    "-c", "copy", "-f", "mpegts", "-t", str(RECORD_DURATION), ts_file
-                ]
-
-                try:
-                    subprocess.run(ffmpeg_command, stdout=log_file, stderr=log_file, check=True)
-                except subprocess.CalledProcessError as e:
-                    log_file.write(f"Error recording stream {stream_name}: {e}\n")
-                    break
-
-
 
 def record_stream(address, port, stream_name):
     """Record a multicast stream in TS format with compression."""
@@ -142,12 +88,11 @@ def record_stream(address, port, stream_name):
     ensure_dir(stream_folder)
 
     log_file_path = os.path.join(stream_folder, "recording.log")
-                        
+
     with open(log_file_path, "a") as log_file:
         while stream_name in active_streams:
-            # Get the current time
             current_time = datetime.now()
-                                
+
             # Calculate the time until the next top of the hour
             next_top_of_hour = current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
             time_until_next_hour = (next_top_of_hour - current_time).total_seconds()
@@ -159,15 +104,15 @@ def record_stream(address, port, stream_name):
             ffmpeg_command = [
                 "ffmpeg",
                 "-i", f"udp://@{address}:{port}",
-                "-c:v", "libx264",  # Use H.264 codec for compression
-                "-preset", "veryfast",  # Adjust encoding speed vs. compression
-                "-crf", "28",  # Quality factor: Lower is better, but larger files
-                "-b:v", "1M",  # Target bitrate for video
-                "-c:a", "aac",  # Use AAC for audio compression
-                "-b:a", "64k",  # Target bitrate for audio
-                "-vf", "scale=640:-1",  # Resize video to 640px width, maintain aspect ratio
-                "-f", "mpegts",  # Output format
-                "-t", str(time_until_next_hour),  # Duration to record
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-crf", "28",
+                "-b:v", "1M",
+                "-c:a", "aac",
+                "-b:a", "64k",
+                "-vf", "scale=640:-1",
+                "-f", "mpegts",
+                "-t", str(time_until_next_hour),
                 ts_file
             ]
 
@@ -177,55 +122,24 @@ def record_stream(address, port, stream_name):
                 log_file.write(f"Error recording stream {stream_name}: {e}\n")
                 break
 
-            # Handle subsequent recordings
-            while stream_name in active_streams:
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                ts_file = os.path.join(stream_folder, f"{timestamp}.ts")
+@app.on_event("startup")
+def startup_event():
+    """Resume active streams on application startup."""
+    loaded_streams = load_streams_from_config()
+    for stream_name, stream_data in loaded_streams.items():
+        if stream_data.get("active", False):
+            thread = threading.Thread(
+                target=record_stream, 
+                args=(stream_data["address"], stream_data["port"], stream_name)
+            )
+            thread.daemon = True
+            thread.start()
+            active_streams[stream_name] = {**stream_data, "thread": thread}
 
-                ffmpeg_command = [
-                    "ffmpeg",
-                    "-i", f"udp://@{address}:{port}",
-                    "-c:v", "libx264",  # Use H.264 codec
-                    "-preset", "veryfast",
-                    "-crf", "28",
-                    "-b:v", "1M",
-                    "-c:a", "aac",
-                    "-b:a", "64k",
-                    "-vf", "scale=640:-1",  # Resize video
-                    "-f", "mpegts",
-                    "-t", str(RECORD_DURATION),
-                    ts_file
-                ]
-
-                try:
-                    subprocess.run(ffmpeg_command, stdout=log_file, stderr=log_file, check=True)
-                except subprocess.CalledProcessError as e:
-                    log_file.write(f"Error recording stream {stream_name}: {e}\n")
-                    break
-
-
-def recordold_stream(address, port, stream_name):
-    """Record a multicast stream in TS format."""
-    stream_folder = os.path.join(STREAMS_DIR, stream_name)
-    ensure_dir(stream_folder)
-
-    log_file_path = os.path.join(stream_folder, "recording.log")
-    with open(log_file_path, "a") as log_file:
-        while stream_name in active_streams:
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            ts_file = os.path.join(stream_folder, f"{timestamp}.ts")
-
-            ffmpeg_command = [
-                "ffmpeg", "-i", f"udp://@{address}:{port}",
-                "-c", "copy", "-f", "mpegts", "-t", str(RECORD_DURATION), ts_file
-            ]
-
-            try:
-                subprocess.run(ffmpeg_command, stdout=log_file, stderr=log_file, check=True)
-            except subprocess.CalledProcessError as e:
-                log_file.write(f"Error recording stream {stream_name}: {e}\n")
-                break
-
+@app.on_event("shutdown")
+def shutdown_event():
+    """Save active streams and clean up on shutdown."""
+    save_streams_to_config()
 
 @app.post("/add_stream")
 async def add_stream(stream: Stream):
@@ -237,17 +151,16 @@ async def add_stream(stream: Stream):
     thread.daemon = True
     thread.start()
 
-    # Add channel_type to the active_streams dictionary
     active_streams[stream.stream_name] = {
         "address": stream.address,
         "port": stream.port,
-        "channel_type": stream.channel_type,  # Save channel_type
-        "thread": thread,
-        }
+        "channel_type": stream.channel_type,
+        "active": True,
+        "thread": thread
+    }
     save_streams_to_config()
 
     return {"message": "Stream added successfully and recording started"}
-
 
 @app.post("/remove_stream")
 async def remove_stream(stream_name: str):
@@ -260,6 +173,36 @@ async def remove_stream(stream_name: str):
 
     return {"message": "Stream removed successfully"}
 
+@app.post("/set_active")
+async def set_stream_active(stream_name: str, active: bool):
+    """Set a stream as active or inactive."""
+    if stream_name not in active_streams and not active:
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    if stream_name not in active_streams:
+        streams_config = load_streams_from_config()
+        if stream_name not in streams_config:
+            raise HTTPException(status_code=404, detail="Stream not found in config")
+
+        stream_data = streams_config[stream_name]
+        if active:
+            thread = threading.Thread(
+                target=record_stream, 
+                args=(stream_data["address"], stream_data["port"], stream_name)
+            )
+            thread.daemon = True
+            thread.start()
+            active_streams[stream_name] = {**stream_data, "thread": thread, "active": True}
+    else:
+        if not active and stream_name in active_streams:
+            del active_streams[stream_name]
+
+    streams_config = load_streams_from_config()
+    if stream_name in streams_config:
+        streams_config[stream_name]["active"] = active
+        save_streams_to_config()
+
+    return {"message": f"Stream '{stream_name}' set to {'active' if active else 'inactive'}"}
 
 @app.get("/list_streams")
 async def list_streams():

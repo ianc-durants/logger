@@ -1,1 +1,20 @@
-{}
+{
+    "CITIZEN TV": {
+        "address": "239.192.11.4",
+        "port": 1234,
+        "channel_type": "tv",
+        "active": true
+    },
+    "Inooro TV": {
+        "address": "239.192.11.3",
+        "port": 1234,
+        "channel_type": "tv",
+        "active": true
+    },
+    "Milele FM": {
+        "address": "239.192.13.30",
+        "port": 1234,
+        "channel_type": "radio",
+        "active": true
+    }
+}
